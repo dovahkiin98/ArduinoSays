@@ -12,11 +12,9 @@ import androidx.core.text.italic
 import androidx.core.text.underline
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.android.synthetic.main.activity_main.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity(R.layout.activity_main) {
 
@@ -29,6 +27,8 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
     private var currentInputCount = 0
     private var currentLedSequence = ByteArray(500)
 
+    private var timerJob: Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -40,7 +40,6 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
             if (connectionSocket == null) return@setOnClickListener
 
             addToSequence(4)
-//            connectionSocket?.outputStream?.write("4".toByteArray())
         }
 
         blue.setOnClickListener {
@@ -48,26 +47,33 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
 
 
             addToSequence(5)
-//            connectionSocket!!.outputStream?.write("5".toByteArray())
         }
 
         yellow.setOnClickListener {
             if (connectionSocket == null) return@setOnClickListener
 
             addToSequence(3)
-//            connectionSocket!!.outputStream?.write("3".toByteArray())
         }
 
         green.setOnClickListener {
             if (connectionSocket == null) return@setOnClickListener
 
             addToSequence(2)
-//            connectionSocket!!.outputStream?.write("2".toByteArray())
         }
 
-        retry.setOnClickListener { initBluetooth() }
+        retryConnection.setOnClickListener { initBluetooth() }
 
         restart.setOnClickListener {
+            lifecycleScope.launch(Dispatchers.IO) {
+                connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
+
+                withContext(Dispatchers.Main) {
+                    startGame()
+                }
+            }
+        }
+
+        replay.setOnClickListener {
             lifecycleScope.launch(Dispatchers.IO) {
                 connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
 
@@ -116,14 +122,6 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
                     withContext(Dispatchers.IO) {
                         try {
                             connectionSocket!!.connect()
-
-                            listenToInput()
-
-                            connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
-
-                            withContext(Dispatchers.Main) {
-                                startGame()
-                            }
                         } catch (e: Exception) {
                             connectionSocket = null
 
@@ -144,6 +142,16 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
                     errorText.text = "(" + e.message + ")"
                 }
             }
+
+            if (connectionSocket != null) {
+                listenToInput()
+
+                connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
+
+                withContext(Dispatchers.Main) {
+                    startGame()
+                }
+            }
         }
     }
 
@@ -153,7 +161,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
                 val receivedSignal = connectionSocket!!.inputStream.read()
 
                 when {
-                    receivedSignal > SIGNAL_WRONG_SEQUENCE -> {
+                    receivedSignal >= SIGNAL_WRONG_SEQUENCE -> {
                         withContext(Dispatchers.Main) {
                             gameOver.isVisible = true
                             score.text = buildSpannedString {
@@ -169,7 +177,14 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
                             standby.isVisible = false
                         }
                     }
+                    receivedSignal == SIGNAL_GAME_WON -> {
+                        withContext(Dispatchers.Main) {
+                            gameWon.isVisible = true
+                            standby.isVisible = false
+                        }
+                    }
                     receivedSignal > SIGNAL_SEQUENCE_FINISHED -> {
+                        currentScore.text = "Your score : $lastIndex"
                         val led = (receivedSignal - SIGNAL_SEQUENCE_FINISHED).toByte()
                         ledSequence[lastIndex++] = led
 
@@ -199,19 +214,37 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         currentLedSequence = ByteArray(500)
     }
 
-    override fun onStop() {
-        super.onStop()
-
+    private fun endGame() {
+        lifecycleScope.cancel()
         connectionSocket?.let {
             it.outputStream.write(SIGNAL_GAME_ENDED)
             while (it.isConnected) {
                 try {
                     it.close()
+                    connectionSocket = null
                 } catch (e: Exception) {
 
                 }
             }
         }
+    }
+
+    override fun onBackPressed() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Exit Game?")
+            .setMessage("Are you sure you want to end the game?")
+            .setPositiveButton("Yes") { _, _ ->
+                endGame()
+                super.onBackPressed()
+            }
+            .setNeutralButton("No") { _, _ -> }
+            .show()
+    }
+
+    override fun onStop() {
+        super.onStop()
+
+        endGame()
 
         if (!defaultBluetooth) bluetoothAdapter.disable()
     }
@@ -220,8 +253,9 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         const val SIGNAL_REPEATING_FINISHED = 0xA1
         const val SIGNAL_RESTART_SEQUENCE = 0xA2
         const val SIGNAL_GAME_ENDED = 0xA0
+        const val SIGNAL_GAME_WON = 0xA3
 
-        const val SIGNAL_SEQUENCE_FINISHED = 0xB0
+        const val SIGNAL_SEQUENCE_FINISHED = 0x50
         const val SIGNAL_WRONG_SEQUENCE = 0xC0
     }
 }

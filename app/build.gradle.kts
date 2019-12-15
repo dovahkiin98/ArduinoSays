@@ -47,7 +47,7 @@ dependencies {
     implementation(kotlin("stdlib-jdk8", KotlinCompilerVersion.VERSION))
     implementation("androidx.appcompat:appcompat:1.1.0")
     implementation("androidx.core:core-ktx:1.2.0-rc01")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.2.0-rc02")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.2.0-rc03")
 
     implementation("com.google.android.material:material:1.2.0-alpha02")
     implementation("androidx.constraintlayout:constraintlayout:2.0.0-beta3")
