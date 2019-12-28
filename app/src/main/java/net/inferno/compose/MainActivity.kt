@@ -41,6 +41,8 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
                             MainViewModel.GAME_MODE_SOUNDS -> setInputFragment(SoundsInputFragment())
                         }
 
+                        gameViewModel.gameManager.setGameMode(it.mode)
+
                         toolbar.setNavigationIcon(R.drawable.ic_arrow)
                         toolbar.menu.findItem(R.id.action_restart).isVisible = true
 

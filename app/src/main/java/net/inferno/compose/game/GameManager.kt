@@ -233,6 +233,14 @@ class GameManager(val lifecycle: Lifecycle, private val viewModel: MainViewModel
         }
     }
 
+    fun setGameMode(mode: Int) {
+        if(mode == MainViewModel.GAME_MODE_COLORS) {
+            connectionSocket?.outputStream?.write(SIGNAL_GAME_MODE_COLORS)
+        } else if (mode == MainViewModel.GAME_MODE_SOUNDS) {
+            connectionSocket?.outputStream?.write(SIGNAL_GAME_MODE_SOUNDS)
+        }
+    }
+
     companion object {
         const val SIGNAL_REPEATING_FINISHED = 0xA1
         const val SIGNAL_RESTART_SEQUENCE = 0xA2
@@ -241,5 +249,8 @@ class GameManager(val lifecycle: Lifecycle, private val viewModel: MainViewModel
 
         const val SIGNAL_SEQUENCE_FINISHED = 0xD0
         const val SIGNAL_WRONG_SEQUENCE = 0xC0
+
+        const val SIGNAL_GAME_MODE_COLORS = 0xE0
+        const val SIGNAL_GAME_MODE_SOUNDS = 0xE1
     }
 }
