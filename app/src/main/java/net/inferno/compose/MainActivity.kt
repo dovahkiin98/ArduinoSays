@@ -1,261 +1,136 @@
 package net.inferno.compose
 
-import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothSocket
 import android.os.Bundle
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.text.bold
-import androidx.core.text.buildSpannedString
-import androidx.core.text.italic
-import androidx.core.text.underline
 import androidx.core.view.isVisible
-import androidx.lifecycle.lifecycleScope
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.commit
+import androidx.lifecycle.observe
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.android.synthetic.main.activity_main.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Job
+import net.inferno.compose.fragment.*
+import net.inferno.compose.game.GameState
+import net.inferno.compose.viewmodel.MainViewModel
 
 class MainActivity : AppCompatActivity(R.layout.activity_main) {
 
-    private val bluetoothAdapter by lazy { BluetoothAdapter.getDefaultAdapter() }
-    private var defaultBluetooth = false
-    private var connectionSocket: BluetoothSocket? = null
-    private var ledSequence = ByteArray(500)
-    private var lastIndex = 0
-
-    private var currentInputCount = 0
-    private var currentLedSequence = ByteArray(500)
-
-    private var timerJob: Job? = null
+    private val gameViewModel by viewModels<MainViewModel>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        defaultBluetooth = bluetoothAdapter.isEnabled
+        gameViewModel.init(lifecycle, this)
 
-        initBluetooth()
+        toolbar.setNavigationOnClickListener { onBackPressed() }
 
-        red.setOnClickListener {
-            if (connectionSocket == null) return@setOnClickListener
-
-            addToSequence(4)
+        toolbar.setOnMenuItemClickListener {
+            gameViewModel.gameManager.startGame()
+            true
         }
 
-        blue.setOnClickListener {
-            if (connectionSocket == null) return@setOnClickListener
+        gameViewModel.gameState.observe(this) {
+            when (it) {
+                is GameState.UserInput -> {
+                    messageLayer.isVisible = false
 
-
-            addToSequence(5)
-        }
-
-        yellow.setOnClickListener {
-            if (connectionSocket == null) return@setOnClickListener
-
-            addToSequence(3)
-        }
-
-        green.setOnClickListener {
-            if (connectionSocket == null) return@setOnClickListener
-
-            addToSequence(2)
-        }
-
-        retryConnection.setOnClickListener { initBluetooth() }
-
-        restart.setOnClickListener {
-            lifecycleScope.launch(Dispatchers.IO) {
-                connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
-
-                withContext(Dispatchers.Main) {
-                    startGame()
-                }
-            }
-        }
-
-        replay.setOnClickListener {
-            lifecycleScope.launch(Dispatchers.IO) {
-                connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
-
-                withContext(Dispatchers.Main) {
-                    startGame()
-                }
-            }
-        }
-    }
-
-    private fun addToSequence(led: Byte) {
-        currentLedSequence[currentInputCount++] = led
-
-        if (currentInputCount == lastIndex) {
-            standby.isVisible = true
-            repeatMessage.isVisible = false
-
-            connectionSocket!!.outputStream.write(SIGNAL_REPEATING_FINISHED)
-            connectionSocket!!.outputStream.write(currentLedSequence)
-        }
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun initBluetooth() {
-        if (!defaultBluetooth) bluetoothAdapter.enable()
-
-        loading.isVisible = true
-        error.isVisible = false
-
-        var hc_05: BluetoothDevice? = null
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            while (hc_05 == null) {
-                val devices = bluetoothAdapter.bondedDevices
-
-                hc_05 = devices.find { it.address == "00:13:EF:00:17:27" }
-            }
-
-            val uuids = hc_05!!.uuids
-            connectionSocket = hc_05!!.createRfcommSocketToServiceRecord(uuids[0].uuid)
-
-            bluetoothAdapter.cancelDiscovery()
-
-            try {
-                withTimeout(5000) {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            connectionSocket!!.connect()
-                        } catch (e: Exception) {
-                            connectionSocket = null
-
-                            withContext(Dispatchers.Main) {
-                                loading.isVisible = false
-                                error.isVisible = true
-                                errorText.text = "(" + e.message + ")"
-                            }
+                    if (it.mode != 0) {
+                        when (it.mode) {
+                            MainViewModel.GAME_MODE_COLORS -> setInputFragment(ColorsInputFragment())
+                            MainViewModel.GAME_MODE_SOUNDS -> setInputFragment(SoundsInputFragment())
                         }
+
+                        toolbar.setNavigationIcon(R.drawable.ic_arrow)
+                        toolbar.menu.findItem(R.id.action_restart).isVisible = true
+
+                        gameViewModel.gameManager.startGame()
+
+                        gameViewModel.gameStarted.postValue(true)
                     }
+
+                    toolbar.menu.findItem(R.id.action_restart).isEnabled = true
                 }
-            } catch (e: Exception) {
-                connectionSocket = null
 
-                withContext(Dispatchers.Main) {
-                    loading.isVisible = false
-                    error.isVisible = true
-                    errorText.text = "(" + e.message + ")"
+                is GameState.Connecting -> {
+                    setMessageFragment(ConnectingFragment())
                 }
-            }
 
-            if (connectionSocket != null) {
-                listenToInput()
+                is GameState.ConnectionSuccessful -> {
+                    inputLayer.isVisible = true
+                    messageLayer.isVisible = false
 
-                connectionSocket!!.outputStream.write(SIGNAL_RESTART_SEQUENCE)
+                    if(gameViewModel.gameStarted.value == false) {
+                        toolbar.navigationIcon = null
+                        toolbar.menu.findItem(R.id.action_restart).isVisible = false
 
-                withContext(Dispatchers.Main) {
-                    startGame()
+                        setInputFragment(ModeSelectionFragment())
+                    } else gameViewModel.gameManager.startGame()
                 }
-            }
-        }
-    }
 
-    private fun listenToInput() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            while (connectionSocket != null && connectionSocket!!.isConnected) {
-                val receivedSignal = connectionSocket!!.inputStream.read()
+                is GameState.ConnectionError -> {
+                    setMessageFragment(ConnectionErrorFragment.newInstance(it.message))
+                }
 
-                when {
-                    receivedSignal >= SIGNAL_WRONG_SEQUENCE -> {
-                        withContext(Dispatchers.Main) {
-                            gameOver.isVisible = true
-                            score.text = buildSpannedString {
-                                append("Your score was : ")
-                                bold {
-                                    italic {
-                                        underline {
-                                            append("${receivedSignal - SIGNAL_WRONG_SEQUENCE}")
-                                        }
-                                    }
-                                }
-                            }
-                            standby.isVisible = false
-                        }
-                    }
-                    receivedSignal == SIGNAL_GAME_WON -> {
-                        withContext(Dispatchers.Main) {
-                            gameWon.isVisible = true
-                            standby.isVisible = false
-                        }
-                    }
-                    receivedSignal > SIGNAL_SEQUENCE_FINISHED -> {
-                        currentScore.text = "Your score : $lastIndex"
-                        val led = (receivedSignal - SIGNAL_SEQUENCE_FINISHED).toByte()
-                        ledSequence[lastIndex++] = led
+                is GameState.AwaitGameInput -> {
+                    inputLayer.isVisible = true
+                    messageLayer.isVisible = true
 
-                        currentInputCount = 0
-                        currentLedSequence = ByteArray(500)
+                    setMessageFragment(AwaitGameInputFragment())
 
-                        withContext(Dispatchers.Main) {
-                            standby.isVisible = false
-                            repeatMessage.isVisible = true
-                        }
-                    }
+                    toolbar.menu.findItem(R.id.action_restart).isEnabled = false
+                }
+
+                is GameState.GameOver -> {
+                    messageLayer.isVisible = true
+
+                    toolbar.menu.findItem(R.id.action_restart).isEnabled = true
+
+                    setMessageFragment(GameOverFragment.newInstance(it.message))
+                }
+
+                is GameState.GameWon -> {
+                    messageLayer.isVisible = true
+
+                    setMessageFragment(GameWonFragment())
+                }
+
+                is GameState.Disconnected -> {
+                    inputLayer.isVisible = false
+                    messageLayer.isVisible = true
+
+                    toolbar.menu.findItem(R.id.action_restart).isEnabled = false
+
+                    setMessageFragment(ConnectingFragment())
                 }
             }
         }
     }
 
-    private fun startGame() {
-        loading.isVisible = false
-        content.isVisible = true
-        standby.isVisible = true
-        gameOver.isVisible = false
-
-        ledSequence = ByteArray(500)
-        lastIndex = 0
-
-        currentInputCount = 0
-        currentLedSequence = ByteArray(500)
+    private fun setMessageFragment(fragment: Fragment) {
+        supportFragmentManager.commit {
+            replace(R.id.messageLayer, fragment)
+        }
     }
 
-    private fun endGame() {
-        lifecycleScope.cancel()
-        connectionSocket?.let {
-            it.outputStream.write(SIGNAL_GAME_ENDED)
-            while (it.isConnected) {
-                try {
-                    it.close()
-                    connectionSocket = null
-                } catch (e: Exception) {
-
-                }
-            }
+    private fun setInputFragment(fragment: Fragment) {
+        supportFragmentManager.commit {
+            replace(R.id.inputLayer, fragment)
         }
     }
 
     override fun onBackPressed() {
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Exit Game?")
-            .setMessage("Are you sure you want to end the game?")
-            .setPositiveButton("Yes") { _, _ ->
-                endGame()
-                super.onBackPressed()
-            }
-            .setNeutralButton("No") { _, _ -> }
-            .show()
-    }
-
-    override fun onStop() {
-        super.onStop()
-
-        endGame()
-
-        if (!defaultBluetooth) bluetoothAdapter.disable()
-    }
-
-    companion object {
-        const val SIGNAL_REPEATING_FINISHED = 0xA1
-        const val SIGNAL_RESTART_SEQUENCE = 0xA2
-        const val SIGNAL_GAME_ENDED = 0xA0
-        const val SIGNAL_GAME_WON = 0xA3
-
-        const val SIGNAL_SEQUENCE_FINISHED = 0x50
-        const val SIGNAL_WRONG_SEQUENCE = 0xC0
+        if (gameViewModel.gameStarted.value == true) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Exit Game?")
+                .setMessage("Are you sure you want to end the game?")
+                .setPositiveButton("Yes") { _, _ ->
+                    gameViewModel.gameStarted.value = false
+                    gameViewModel.gameState.postValue(GameState.ConnectionSuccessful())
+                    gameViewModel.gameManager.endGame()
+                }
+                .setNeutralButton("No") { _, _ -> }
+                .show()
+        } else super.onBackPressed()
     }
 }

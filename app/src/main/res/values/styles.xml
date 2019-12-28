@@ -5,5 +5,7 @@
         <item name="colorAccent">@color/colorAccent</item>
         <item name="android:statusBarColor">#121212</item>
         <item name="android:navigationBarColor">#121212</item>
+        <item name="fontFamily">@font/roboto</item>
+        <item name="font">@font/roboto</item>
     </style>
 </resources>
